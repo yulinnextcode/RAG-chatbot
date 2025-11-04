@@ -1,0 +1,9 @@
+#policy-engine .user-message {
+    align-self: flex-end;
+    background-color: #e1e3e1;
+    margin-left: 75px;
+}
+
+#policy-engine .user-message-container {
+    align-self: flex-end;
+}

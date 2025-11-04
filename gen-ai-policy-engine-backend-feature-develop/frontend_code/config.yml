@@ -1,0 +1,57 @@
+oracle_secret:
+  secret_name: "PolicyEngine/oracleDev"
+  region_name: "us-east-1"
+  service_name: "secretsmanager"
+  
+weaviate_secret:
+  secret_name: "PolicyEngine/weaviateDev"
+  region_name: "us-east-1"
+  service_name: "secretsmanager"
+  weaviate_hostname: ""
+
+oracle_connection_pool:
+  min: 5
+  max: 50
+  increment: 5
+  wait_timeout: 200
+
+weaviate_client:
+  http_port: 8080
+  grpc_port: 50051
+  timeout_init: 30
+  timeout_query: 60
+  timeout_insert: 120
+
+app:
+  request_per_limit: ["50 per minute"]
+  titan_model_id: "amazon.titan-embed-text-v1"
+  temperature: 0.1
+  alpha: 0.25
+  medicaid_limit: 6
+  non_medicaid_limit: 5
+  accept: "application/json"
+  contentType: "application/json"
+  port: 1521
+  SESSION_TTL: 2400
+  region_name: "us-east-1"
+  max_tokens: 2500
+  bedrock_modelId: "anthropic.claude-3-5-sonnet-20240620-v1:0"
+  anthropic_version: "bedrock-2023-05-31"
+
+llm:
+  model_id: "anthropic.claude-3-5-sonnet-20240620-v1:0"
+  max_tokens: 1000
+  anthropic_version: "bedrock-2023-05-31"
+
+ebo:
+  retries: 3
+  base_delay: 1
+  max_delay: 15
+
+cbwm:
+  K: 10
+
+patterns: "[0-9]{9}"
+
+llmguard_allowed_names: ["KATIE BECKETT", "Katie Beckett", "katie backett", "Bendex", "BENDEX", "bendex"]
+

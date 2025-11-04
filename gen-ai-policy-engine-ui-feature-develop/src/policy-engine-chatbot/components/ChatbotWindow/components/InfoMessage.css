@@ -1,0 +1,6 @@
+#policy-engine .info-message {
+    align-self: flex-start;
+    background-color: #ecf3fe;
+    line-height: 1.4;
+    margin-right: 75px;
+}

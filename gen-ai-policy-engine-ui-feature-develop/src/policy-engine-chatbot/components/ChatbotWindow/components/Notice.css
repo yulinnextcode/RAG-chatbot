@@ -1,0 +1,31 @@
+#policy-engine .header {
+    text-align: center;
+    margin: 8px;
+}
+
+#policy-engine .notice h3 {
+    font-size: 18px;
+}
+
+#policy-engine .notice h4 {
+    font-size: 16px;
+}
+
+#policy-engine .notice .reminder {
+    font-size: 16px;
+}
+
+#policy-engine .notice li{  
+    font-size: 14px;
+}
+
+#policy-engine .notice *{ 
+    font-family: "Google Sans", "Helvetica Neue", sans-serif;
+}
+
+#policy-engine .notice .warning { 
+    font-size: 0.9rem; 
+    color: red;
+    margin: 4px; 
+    align-content: center;
+}

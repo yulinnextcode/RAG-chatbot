@@ -1,0 +1,299 @@
+---
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+stages:
+  - build-lambda
+  - deploy-lambda
+  - build-app
+  - test-app
+  - deploy-app-dev
+  - deploy-app-sit
+  - deploy-app-uat
+  - deploy-app-prod
+
+cache:
+  key: ${CI_PROJECT_NAME}
+
+variables:
+  DOCKER_BUILDKIT: 1
+
+# Backend lambda deployment
+build-dev-lambda:
+  stage: build-lambda
+  tags:
+    - gaies-ai-dev-runner
+  script:
+    - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $AWS_DEV_ECR
+    - docker build -t backend-lambda ./backend_lambda/.
+    - docker tag backend-lambda:latest $AWS_DEV_ECR/pe-dev/backend-lambda:latest
+    - docker push $AWS_DEV_ECR/pe-dev/backend-lambda:latest
+  when: manual
+  allow_failure: true
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^feature.*$/ || $CI_COMMIT_BRANCH == "main"
+
+deploy-dev-lambda:
+  stage: deploy-lambda
+  tags:
+    - gaies-ai-mgmt-runner
+  before_script:
+    - cd /data/pe-build-scripts
+    - source aws-assume-role.sh -r $DEV_ROLE_ARN -n gitlab-uat
+  script:
+    - cd $CI_BUILDS_DIR
+    - aws lambda update-function-code --function-name $DEV_LAMBDA_NAME --image-uri $AWS_DEV_ECR/pe-dev/backend-lambda:latest
+  when: manual
+  needs:
+    - build-dev-lambda
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^feature.*$/ || $CI_COMMIT_BRANCH == "main"
+
+build-sit-lambda:
+  stage: build-lambda
+  tags:
+    - gaies-ai-dev-runner
+  script:
+    - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $AWS_SIT_ECR
+    - docker build -t backend-lambda ./backend_lambda/.
+    - docker tag backend-lambda:latest $AWS_SIT_ECR/pe-sit/backend-lambda:latest
+    - docker push $AWS_DEV_ECR/pe-sit/backend-lambda:latest
+  when: manual
+  allow_failure: true
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^feature.*$/ || $CI_COMMIT_BRANCH == "main"
+
+deploy-sit-lambda:
+  stage: deploy-lambda
+  tags:
+    - gaies-ai-dev-runner
+  script:
+    - aws lambda update-function-code --function-name $SIT_LAMBDA_NAME --image-uri $AWS_SIT_ECR/pe-sit/backend-lambda:latest
+  when: manual
+  needs:
+    - build-sit-lambda
+  rules:
+   - if: $CI_COMMIT_BRANCH =~ /^feature.*$/ || $CI_COMMIT_BRANCH == "main"
+
+build-uat-lambda:
+  stage: build-lambda
+  tags:
+    - gaies-ai-mgmt-runner
+  before_script:
+    - cd /data/pe-build-scripts
+    - source aws-assume-role.sh -r $UAT_ROLE_ARN -n gitlab-uat
+  script:
+    - dzdo su
+    - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $AWS_UAT_ECR
+    - docker build -t backend-lambda $CI_PROJECT_DIR/backend_lambda/.
+    - docker tag backend-lambda:latest $AWS_UAT_ECR/pe-uat/backend-lambda:latest
+    - docker push $AWS_UAT_ECR/pe-uat/backend-lambda:latest
+  when: manual
+  allow_failure: true
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^feature.*$/ || $CI_COMMIT_BRANCH == "main"
+
+deploy-uat-lambda:
+  stage: deploy-lambda
+  tags:
+    - gaies-ai-mgmt-runner
+  before_script:
+    - cd /data/pe-build-scripts
+    - source aws-assume-role.sh -r $UAT_ROLE_ARN -n gitlab-uat
+  script:
+    - aws lambda update-function-code --function-name $UAT_LAMBDA_NAME --image-uri $AWS_UAT_ECR/pe-uat/backend-lambda:latest
+  when: manual
+  needs:
+    - build-uat-lambda
+  rules:
+   - if: $CI_COMMIT_BRANCH =~ /^feature.*$/ || $CI_COMMIT_BRANCH == "main"
+
+build-prod-lambda:
+  stage: build-lambda
+  tags:
+    - gaies-ai-mgmt-runner
+  before_script:
+    - cd /data/pe-build-scripts
+    - source aws-assume-role.sh -r $PROD_ROLE_ARN -n gitlab-prod
+  script:
+    - dzdo su
+    - aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin $AWS_PROD_ECR
+    - docker build -t backend-lambda $CI_PROJECT_DIR/backend_lambda/.
+    - docker tag backend-lambda:latest $AWS_PROD_ECR/pe-prod/backend-lambda:latest
+    - docker push $AWS_PROD_ECR/pe-prod/backend-lambda:latest
+  when: manual
+  allow_failure: true
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^feature.*$/ || $CI_COMMIT_BRANCH == "main"
+
+deploy-prod-lambda:
+  stage: deploy-lambda
+  tags:
+    - gaies-ai-mgmt-runner
+  before_script:
+    - cd /data/pe-build-scripts
+    - source aws-assume-role.sh -r $PROD_ROLE_ARN -n gitlab-uat
+  script:
+    - aws lambda update-function-code --function-name $PROD_LAMBDA_NAME --image-uri $AWS_PROD_ECR/pe-prod/backend-lambda:latest
+  when: manual
+  needs:
+    - build-prod-lambda
+  rules:
+   - if: $CI_COMMIT_BRANCH =~ /^feature.*$/ || $CI_COMMIT_BRANCH == "main"
+
+# Application deployment to ECS
+build-app:
+  stage: build-app
+  image: docker:24.0.5
+  services:
+    - docker:dind
+  before_script:
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER $CI_REGISTRY --password-stdin
+  script:
+    - docker pull $CI_REGISTRY_IMAGE:latest || true
+    - docker build --build-arg BUILDKIT_INLINE_CACHE=1 --cache-from $CI_REGISTRY_IMAGE:latest --tag $CI_REGISTRY_IMAGE:latest ./frontend_code/.
+    - docker push $CI_REGISTRY_IMAGE:latest
+  interruptible: true
+
+test-app:
+  stage: test-app
+  image: python:latest
+  services:
+    - name: registry.gitlab.com/gadhs/ai-policy-engine/gen-ai-policy-engine-backend:latest
+      alias: app
+  variables:
+    DOCKER_HOST: tcp://docker:2375/
+  script:
+    - sleep 60
+    - curl -s -o /dev/null -w "%{http_code}" http://app:5000/health | grep -q "200" || exit 1
+  allow_failure: true
+  # needs:
+  #   - build-app
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^feature.*$/ || $CI_COMMIT_BRANCH == "main"
+
+deploy-app-dev:
+  stage: deploy-app-dev
+  environment:
+    name: dev
+  tags:
+    - gaies-ai-dev-runner
+  script:
+    - aws ecs update-service --cluster $DEV_CLUSTER_NAME --service $DEV_SERVICE_NAME --force-new-deployment
+  when: manual
+  needs: 
+    - test-app
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^feature.*$/ || $CI_COMMIT_BRANCH == "main"
+
+validate-app-dev:
+  stage: deploy-app-dev
+  tags:
+    - gaies-ai-dev-runner
+  script:
+    - cd /data
+    - ./ecs_validate --cluster $DEV_CLUSTER_NAME --service $DEV_SERVICE_NAME --region us-east-1 --interval 15
+  needs:
+    - deploy-app-dev
+  allow_failure: false
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^feature.*$/ || $CI_COMMIT_BRANCH == "main"
+
+deploy-app-sit:
+  stage: deploy-app-sit
+  environment:
+    name: sit
+  tags:
+    - gaies-ai-dev-runner
+  script:
+    - aws ecs update-service --cluster $SIT_CLUSTER_NAME --service $SIT_SERVICE_NAME --force-new-deployment
+    - sleep 10
+  when: manual
+  needs:
+    - validate-app-dev
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^feature.*$/ || $CI_COMMIT_BRANCH == "main"
+
+validate-app-sit:
+  stage: deploy-app-sit
+  tags:
+    - gaies-ai-dev-runner
+  script:
+    - cd /data/pe-build-scripts
+    - ./ecs_validate --cluster $SIT_CLUSTER_NAME --service $SIT_SERVICE_NAME --region us-east-1 --interval 15
+  allow_failure: false  
+  needs:
+    - deploy-app-sit
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^feature.*$/ || $CI_COMMIT_BRANCH == "main"
+
+deploy-app-uat:
+  stage: deploy-app-uat
+  environment:
+    name: uat
+  tags:
+    - gaies-ai-mgmt-runner
+  before_script:
+    - cd /data/pe-build-scripts
+    - source aws-assume-role.sh -r $UAT_ROLE_ARN -n gitlab-uat
+  script:
+    - aws ecs update-service --cluster $UAT_CLUSTER_NAME --service $UAT_SERVICE_NAME --force-new-deployment
+    - sleep 10
+  when: manual
+  needs:
+    - validate-app-sit
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^feature.*$/ || $CI_COMMIT_BRANCH == "main"
+
+validate-app-uat:
+  stage: deploy-app-uat
+  tags:
+    - gaies-ai-mgmt-runner
+  before_script:
+    - cd /data/pe-build-scripts
+    - source aws-assume-role.sh -r $UAT_ROLE_ARN -n gitlab-uat
+  script:
+    - cd /data/pe-build-scripts
+    - ./ecs_validate --cluster $UAT_CLUSTER_NAME --service $UAT_SERVICE_NAME --region us-east-1 --interval 15
+  allow_failure: false
+  needs:
+    - deploy-app-uat
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^feature.*$/ || $CI_COMMIT_BRANCH == "main"
+
+deploy-app-prod:
+  stage: deploy-app-prod
+  environment:
+    name: prod
+  tags:
+    - gaies-ai-mgmt-runner
+  before_script:
+    - cd /data/pe-build-scripts
+    - source aws-assume-role.sh -r $PROD_ROLE_ARN -n gitlab-uat
+  script:
+    - aws ecs update-service --cluster $PROD_CLUSTER_NAME --service $PROD_SERVICE_NAME --force-new-deployment
+    - sleep 10
+  when: manual
+  needs:
+    - validate-app-uat
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^feature.*$/ || $CI_COMMIT_BRANCH == "main"
+
+validate-app-prod:
+  stage: deploy-app-prod
+  tags:
+    - gaies-ai-mgmt-runner
+  before_script:
+    - cd /data/pe-build-scripts
+    - source aws-assume-role.sh -r $PROD_ROLE_ARN -n gitlab-uat 
+  script:
+    - cd /data/pe-build-scripts
+    - ./ecs_validate --cluster $PROD_CLUSTER_NAME --service $PROD_SERVICE_NAME --region us-east-1 --interval 15
+  needs:
+    - deploy-app-prod
+  rules:
+    - if: $CI_COMMIT_BRANCH =~ /^feature.*$/ || $CI_COMMIT_BRANCH == "main"

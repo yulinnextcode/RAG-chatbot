@@ -1,0 +1,292 @@
+---
+workflow:
+  rules:
+    - if : $CI_PIPELINE_SOURCE == "merge_request event"
+    - if : $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+      when: never
+    - if: $CI_COMMIT_BRANCH
+
+stages:
+  - build
+  - dockerBuild
+  - dockerTest
+  - deployDev
+  - deploySit
+  - deployUat
+  - deployProd
+
+cache:
+  key: ${CI_PROJECT_NAME}
+  paths:
+    - node_modules/
+
+variables:
+  NPM_CONFIG_CACHE: "$CI_PROJECT_DIR/.npm"
+  IMAGE_TAG: $CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA
+
+buildDev:
+  tags:
+    - gitlab-org-docker
+  image: node:20.17.0
+  stage: build
+  script:
+    - npm run package -- --env BACKEND_API_URL=https://policydev.tools.gateway.ga.gov
+  artifacts:
+    paths:
+      - dist/*
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+dockerBuildDev:
+  stage: dockerBuild
+  image: docker:24.0.5
+  services:
+    - docker:dind
+  before_script:
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER $CI_REGISTRY --password-stdin
+  script:
+    - docker build -t $CI_REGISTRY/gadhs/ai-policy-engine/gen-ai-policy-engine-ui:latest .
+    - docker push $CI_REGISTRY/gadhs/ai-policy-engine/gen-ai-policy-engine-ui:latest
+  when: manual
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  needs:
+    - buildDev
+
+dockerDevTest:
+  stage: dockerTest
+  image: docker:24.0.5
+  services:
+    - docker:dind
+  before_script:
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER $CI_REGISTRY --password-stdin
+  script:
+    - docker pull registry.gitlab.com/gadhs/ai-policy-engine/gen-ai-policy-engine-ui:latest
+    - docker run --name webserver -d -p 80:80 registry.gitlab.com/gadhs/ai-policy-engine/gen-ai-policy-engine-ui:latest
+    - sleep 10
+    - docker ps
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  needs:
+    - dockerBuildDev
+    - buildDev
+
+deployDev:
+  stage: deployDev
+  tags:
+    - gaies-ai-dev-runner
+  script:
+    - aws ecs update-service --cluster $DEV_CLUSTER_NAME --service $DEV_SERVICE_NAME --force-new-deployment
+  when: manual
+  rules:
+   - if: $CI_COMMIT_BRANCH =~ /^feature.*$/
+  needs:
+    - dockerDevTest
+
+buildSit:
+  tags:
+    - gitlab-org-docker
+  image: node:20.17.0
+  stage: build
+  script:
+    - npm run package -- --env BACKEND_API_URL=https://policytest.tools.gateway.ga.gov
+  artifacts:
+    paths:
+      - dist/*
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+
+dockerBuildSit:
+  stage: dockerBuild
+  image: docker:24.0.5
+  services:
+    - docker:dind
+  before_script:
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER $CI_REGISTRY --password-stdin ### Auth to git lab container registry ###
+  script:
+    - docker build -t $CI_REGISTRY/gadhs/ai-policy-engine/gen-ai-policy-engine-ui:sit .  ### Build docker image using Dockerfile (thats what the . is) ###
+    - docker push $CI_REGISTRY/gadhs/ai-policy-engine/gen-ai-policy-engine-ui:sit
+  when: manual
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  needs:
+    - buildSit
+
+dockerSitTest:
+  stage: dockerTest
+  image: docker:24.0.5
+  services:
+    - docker:dind
+  before_script:
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER $CI_REGISTRY --password-stdin
+  script:
+    - docker pull registry.gitlab.com/gadhs/ai-policy-engine/gen-ai-policy-engine-ui:sit
+    - docker run --name webserver -d -p 80:80 registry.gitlab.com/gadhs/ai-policy-engine/gen-ai-policy-engine-ui:sit
+    - sleep 10
+    - docker ps
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push"'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  needs:
+    - dockerBuildSit
+    - buildSit
+
+deploySit:
+  stage: deploySit
+  tags:
+    - gaies-ai-dev-runner
+  script:
+    - aws ecs update-service --cluster $SIT_CLUSTER_NAME --service $SIT_SERVICE_NAME --force-new-deployment
+  when: manual
+  rules:
+   - if: $CI_COMMIT_BRANCH =~ /^feature.*$/
+  needs:
+    - dockerSitTest
+
+buildUat:
+  tags:
+    - gitlab-org-docker
+  image: node:20.17.0
+  stage: build
+  script:
+    - npm run package -- --env BACKEND_API_URL=https://policyuat.tools.gateway.ga.gov
+  artifacts:
+    paths:
+      - dist/*
+
+dockerBuildUat:
+  stage: dockerBuild
+  image: docker:24.0.5
+  services:
+    - docker:dind
+  before_script:
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER $CI_REGISTRY --password-stdin
+  script:
+    - docker build -t $CI_REGISTRY/gadhs/ai-policy-engine/gen-ai-policy-engine-ui:uat .
+    - docker push $CI_REGISTRY/gadhs/ai-policy-engine/gen-ai-policy-engine-ui:uat
+  when: manual
+  needs:
+    - buildUat
+
+dockerUatTest:
+  stage: dockerTest
+  image: docker:24.0.5
+  services:
+    - docker:dind
+  before_script:
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER $CI_REGISTRY --password-stdin
+  script:
+    - docker pull registry.gitlab.com/gadhs/ai-policy-engine/gen-ai-policy-engine-ui:uat
+    - docker run --name webserver -d -p 80:80 registry.gitlab.com/gadhs/ai-policy-engine/gen-ai-policy-engine-ui:uat
+    - sleep 10
+    - docker ps
+  needs:
+    - dockerBuildUat
+    - buildUat
+
+deployUat:
+  stage: deployUat
+  environment:
+    name: uat
+  tags:
+    - gaies-ai-mgmt-runner
+  before_script:
+    - cd /data/pe-build-scripts
+    - source aws-assume-role.sh -r $UAT_ROLE_ARN -n gitlab-uat
+  script:
+    - aws ecs update-service --cluster $UAT_CLUSTER_NAME --service $UAT_SERVICE_NAME --force-new-deployment
+  when: manual
+  rules:
+   - if: $CI_COMMIT_BRANCH =~ /^feature.*$/
+  needs:
+    - dockerUatTest
+
+buildProd:
+  tags:
+    - gitlab-org-docker
+  image: node:20.17.0
+  stage: build
+  script:
+    - npm run package -- --env BACKEND_API_URL=https://policyprod.tools.gateway.ga.gov
+  artifacts:
+    paths:
+      - dist/*
+
+dockerBuildProd:
+  stage: dockerBuild
+  image: docker:24.0.5
+  services:
+    - docker:dind
+  before_script:
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER $CI_REGISTRY --password-stdin
+  script:
+    - docker build -t $CI_REGISTRY/gadhs/ai-policy-engine/gen-ai-policy-engine-ui:prod .
+    - docker push $CI_REGISTRY/gadhs/ai-policy-engine/gen-ai-policy-engine-ui:prod
+  when: manual
+  needs:
+    - buildProd
+
+dockerProdTest:
+  stage: dockerTest
+  image: docker:24.0.5
+  services:
+    - docker:dind
+  before_script:
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER $CI_REGISTRY --password-stdin
+  script:
+    - docker pull registry.gitlab.com/gadhs/ai-policy-engine/gen-ai-policy-engine-ui:prod
+    - docker run --name webserver -d -p 80:80 registry.gitlab.com/gadhs/ai-policy-engine/gen-ai-policy-engine-ui:prod
+    - sleep 10
+    - docker ps
+  needs:
+    - dockerBuildProd
+    - buildProd
+
+deployProd:
+  stage: deployProd
+  tags:
+    - gaies-ai-mgmt-runner
+  before_script:
+    - cd /data/pe-build-scripts
+    - source aws-assume-role.sh -r $PROD_ROLE_ARN -n 'gitlab-prod' 
+  script:
+    - aws ecs update-service --cluster $PROD_CLUSTER_NAME --service $PROD_SERVICE_NAME --force-new-deployment
+  when: manual
+  rules:
+   - if: $CI_COMMIT_BRANCH =~ /^feature.*$/
+  needs:
+    - dockerProdTest
+
+# validateSit:
+#   stage: validateSit
+#   image: amazon/aws-cli
+#   script:
+#     - aws ecs describe-services --cluster $DEV_CLUSTER_NAME --services $DEV_SERVICE_NAME --query "services[0].deployments[0].rolloutState"
+#     - curl -f https://url.example.com/health
+#   needs:
+#     - deploySit
+
+# deployProd:
+#   stage: deployProd
+#   image: amazon/aws-cli
+#   script:
+#     - export CLUSTER_NAME=$PROD_CLUSTER_NAME
+#     - export SERVICE_NAME=$PROD_SERVICE_NAME
+#     - aws ecs update-service --cluster $CLUSTER_NAME --service $SERVICE_NAME --force-new-deployment
+
+#   when: manual
+
+
+# validateProd:
+#   stage: validateProd
+#   image: amazon/aws-cli
+#   script:
+#     - aws ecs describe-services --cluster $DEV_CLUSTER_NAME --services $DEV_SERVICE_NAME --query "services[0].deployments[0].rolloutState"
+#     - curl -f https://url.example.com/health
+#   needs:
+#     - deployProd

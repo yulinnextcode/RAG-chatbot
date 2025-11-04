@@ -1,0 +1,50 @@
+#policy-engine .window {
+    position: fixed;
+    bottom: 104px; 
+    right: 20px;
+    background-color: white;
+    border-radius: 8px;
+    color: #1862c2;
+    box-shadow: rgba(0, 0, 0, 0.24) 1px 4px 15px 0px;
+    display: flex;
+    flex-direction: column;
+    z-index: 5000;
+}
+
+#policy-engine *:not(path):not(svg) {
+    all: revert;
+}
+
+#policy-engine .window.min {
+    top: 80px;
+    width: 440px;
+}
+
+
+#policy-engine .window.max {
+    top: 20px;
+    left: 300px;
+}
+
+#policy-engine .resize-button {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    color: white;
+    font-size: 24px;
+    background-color: transparent;
+    border: none;
+    padding-top: 4px; 
+    cursor: pointer;
+}
+
+#policy-engine .window-header {
+    background-color: #1862c2;
+    color: white;
+    text-align: center;
+    padding: 10px;
+    margin: 0;
+    text-align: center; 
+    border-top-left-radius: 8px;
+    border-top-right-radius: 8px;
+}

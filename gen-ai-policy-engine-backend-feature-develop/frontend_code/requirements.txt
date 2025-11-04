@@ -1,0 +1,15 @@
+requests==2.32.3
+boto3==1.35.16
+json5==0.9.25
+botocore== 1.35.16
+weaviate-client
+pandas==2.2.2
+langchain==0.2.16
+langchain-community==0.2.16
+SQLAlchemy==2.0.31
+oracledb==2.4.1
+llm-guard==0.3.15
+flask==3.0.3
+flask-cors
+Flask-Caching
+Flask-Limiter

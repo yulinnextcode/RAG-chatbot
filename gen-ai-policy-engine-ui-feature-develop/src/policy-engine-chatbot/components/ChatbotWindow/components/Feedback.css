@@ -1,0 +1,35 @@
+#policy-engine .feedback-button,
+#policy-engine .feedback span ,
+#policy-engine .feedback input {
+    background: transparent;
+    border: none;
+    margin-top: 8px;
+    font-size: 12px;
+}
+
+#policy-engine .feedback-button {
+    cursor: pointer;
+}
+
+#policy-engine .feedback-input-container {
+    width: 100%;
+    display: flex;
+}
+
+#policy-engine .feedback-container {
+    margin-left: auto;
+}
+
+#policy-engine .feedback-button.thumb-up{
+    color: rgb(60, 104, 60);
+}
+
+#policy-engine .feedback-button.thumb-down{
+    color: rgb(104, 49, 49);
+}
+
+#policy-engine .feedback {
+    display: flex;
+    float: right;
+    width: 100%;
+}

@@ -1,0 +1,49 @@
+#policy-engine .chat-history {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    overflow: hidden scroll;
+    padding: 10px;
+    text-align: left;
+}
+
+#policy-engine .message-icon {
+    display: table-cell; 
+    font-size: 24px;
+    vertical-align: top;
+    width: 24px;
+    padding: 0 4px;
+}
+
+#policy-engine .message-container {
+    display: table-row;
+    background: transparent;
+    flex: 0 0 auto;
+    margin-top: 10px;
+    max-width: calc(100% - 28px - 75px + 32px);
+
+}
+
+#policy-engine .message {
+    display: table-cell;
+    background: rgb(255, 255, 255);
+    border-radius: 12px;
+    flex: 0 0 auto;
+    font-family: "Google Sans", "Helvetica Neue", sans-serif;
+    font-size: 14px;
+    /* margin-top: 10px;
+    max-width: calc(100% - 28px - 75px); */
+    padding: 7px 16px;
+    word-break: break-word;
+    overflow-wrap: break-word;
+    color: #001d35;
+}
+
+#policy-engine .message h4{
+    margin: 4px 0;
+    font-family: "Google Sans", "Helvetica Neue", sans-serif;
+}
+
+#policy-engine .bottom-margin{
+    margin: 15px;
+}

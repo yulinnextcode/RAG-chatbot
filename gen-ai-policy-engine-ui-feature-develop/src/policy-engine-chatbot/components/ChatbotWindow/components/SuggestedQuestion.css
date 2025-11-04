@@ -1,0 +1,18 @@
+#policy-engine .suggested-question {
+    align-items: center;
+    background-color: rgb(255, 255, 255);
+    border-width: 1px;
+    border-style: solid;
+    border-image: initial;
+    border-color: var(--df-messenger-chip-border-color);
+    border-radius: 20px;
+    box-shadow: #0000003d 0px 2px 2px 0px;
+    display: table;
+    margin: 0px 10px 10px 0px;
+    padding: 8px 16px;
+    cursor: pointer;
+}
+
+#policy-engine .suggested-question.enabled:hover {
+    background: rgb(229, 229, 229);
+}

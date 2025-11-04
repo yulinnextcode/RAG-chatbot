@@ -1,0 +1,14 @@
+#policy-engine .timeout-message {
+    align-self: flex-start;
+    background-color: #ecf3fe;
+    line-height: 1.4;
+    margin-right: 75px;
+}
+
+#policy-engine .timeout-message div{
+    text-align: center;
+}
+
+#policy-engine .timeout-message button{
+    margin: 0 2px;
+}

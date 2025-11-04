@@ -1,0 +1,13 @@
+#policy-engine .policy-engine-chatbot-botton {
+    position: fixed;
+    bottom: 20px; 
+    right: 20px; 
+    background: #0b57d0;
+    border: none;
+    border-radius: 50%;
+    box-shadow: rgba(0, 0, 0, 0.24) 1px 4px 15px 0px;
+    cursor: pointer;
+    height: 56px;
+    position: fixed; 
+    width: 56px;
+}

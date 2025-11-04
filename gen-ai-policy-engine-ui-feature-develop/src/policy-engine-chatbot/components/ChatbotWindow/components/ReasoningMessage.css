@@ -1,0 +1,25 @@
+#policy-engine .reasoning-message {
+    align-self: flex-start;
+    background-color: #ecf3fe;
+    line-height: 1.4;
+    margin-right: 75px;
+}
+
+#policy-engine .reasoning-message ul{
+    padding-left: 15px;
+    margin: 0;
+}
+
+#policy-engine .reasoning-message li{
+    margin: 8px 0;
+    white-space: pre-wrap;
+    font-family: "Google Sans", "Helvetica Neue", sans-serif;
+    font-size: 14px;
+}
+
+#policy-engine .reasoning-message a:visited,
+#policy-engine .reasoning-message a{
+    color: #001d35;
+}
+ 
+
