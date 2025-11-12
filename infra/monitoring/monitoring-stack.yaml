@@ -1,0 +1,217 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Monitoring stack for GA Policy Engine (API Gateway, Lambda, EC2, EFS, RDS)
+
+Parameters:
+  # === Required ===
+  RestApiId:
+    Type: String
+    Description: "API Gateway Rest API Id (from api stack output; looks like a1b2c3d4)"
+  StageName:
+    Type: String
+    Default: prod
+    Description: "API stage name (default: prod)"
+  LambdaFunctionName:
+    Type: String
+    Description: "Policy Engine Lambda function name (NOT ARN) from compute stack"
+
+  # === Optional (leave empty if not used) ===
+  Ec2InstanceId:
+    Type: String
+    Default: ""
+    Description: "(Optional) EC2 instance id for Weaviate (e.g., i-0abc123456789)"
+  EfsFileSystemId:
+    Type: String
+    Default: ""
+    Description: "(Optional) EFS FileSystemId (e.g., fs-0123456789)"
+  DBInstanceIdentifier:
+    Type: String
+    Default: ""
+    Description: "(Optional) RDS DB instance identifier if you want DB alarms"
+  AlertEmail:
+    Type: String
+    Default: ""
+    Description: "(Optional) Email address to receive alerts via SNS (leave empty to skip)"
+  DashboardName:
+    Type: String
+    Default: GA-PolicyEngine-Observability
+    Description: "CloudWatch dashboard name to create/update"
+
+Resources:
+  #########################################
+  # SNS Topic for Alerts
+  #########################################
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Sub "GA-PolicyEngine-Alerts-${StageName}"
+      TopicName: !Sub "GA-PolicyEngine-Alerts-${StageName}"
+      Subscription:
+        - !If
+          - HasEmail
+          - Endpoint: !Ref AlertEmail
+            Protocol: email
+          - !Ref "AWS::NoValue"
+
+  #########################################
+  # API Gateway Monitoring Alarms
+  #########################################
+  Api5XXAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "GA-API-${RestApiId}-${StageName}-5XX"
+      Namespace: AWS/ApiGateway
+      MetricName: 5XXError
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref RestApiId
+        - Name: Stage
+          Value: !Ref StageName
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 5
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  ApiLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "GA-API-${RestApiId}-${StageName}-Latency"
+      Namespace: AWS/ApiGateway
+      MetricName: Latency
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref RestApiId
+        - Name: Stage
+          Value: !Ref StageName
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 5
+      Threshold: 2000
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  #########################################
+  # Lambda Monitoring Alarms
+  #########################################
+  LambdaErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "GA-Lambda-${LambdaFunctionName}-Errors"
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref LambdaFunctionName
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 5
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  LambdaDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "GA-Lambda-${LambdaFunctionName}-Duration"
+      Namespace: AWS/Lambda
+      MetricName: Duration
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref LambdaFunctionName
+      Statistic: Average
+      Period: 60
+      EvaluationPeriods: 5
+      Threshold: 5000
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  #########################################
+  # CloudWatch Dashboard
+  #########################################
+  Dashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Ref DashboardName
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "API Gateway 4XX/5XX Errors",
+                "region": "${AWS::Region}",
+                "metrics": [
+                  [ "AWS/ApiGateway", "4XXError", "ApiId", "${RestApiId}", "Stage", "${StageName}" ],
+                  [ "AWS/ApiGateway", "5XXError", "ApiId", "${RestApiId}", "Stage", "${StageName}" ]
+                ],
+                "period": 60,
+                "stat": "Sum",
+                "view": "timeSeries",
+                "stacked": false,
+                "annotations": { "horizontal": [] }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "Lambda Errors and Duration",
+                "region": "${AWS::Region}",
+                "metrics": [
+                  [ "AWS/Lambda", "Errors", "FunctionName", "${LambdaFunctionName}" ],
+                  [ "AWS/Lambda", "Duration", "FunctionName", "${LambdaFunctionName}" ]
+                ],
+                "period": 60,
+                "stat": "Average",
+                "view": "timeSeries",
+                "stacked": false,
+                "annotations": { "horizontal": [] }
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 12,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "title": "API Gateway Latency (ms)",
+                "region": "${AWS::Region}",
+                "metrics": [
+                  [ "AWS/ApiGateway", "Latency", "ApiId", "${RestApiId}", "Stage", "${StageName}" ]
+                ],
+                "period": 60,
+                "stat": "Average",
+                "view": "timeSeries",
+                "annotations": { "horizontal": [] }
+              }
+            }
+          ]
+        }
+
+Conditions:
+  HasEmail: !Not [!Equals [!Ref AlertEmail, ""]]
+
+Outputs:
+  DashboardName:
+    Description: "Name of the CloudWatch Dashboard"
+    Value: !Ref DashboardName
+  AlertsTopicArn:
+    Description: "SNS Topic ARN for CloudWatch alerts"
+    Value: !Ref AlertsTopic

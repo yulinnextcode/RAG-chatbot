@@ -1,0 +1,215 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: GA Policy Engine - API Gateway Stack (Frontend Integration, stable deploy)
+
+Parameters:
+  PolicyEngineLambdaArn:
+    Type: String
+    Description: ARN of the Policy Engine Lambda created in compute-stack.yaml
+
+Resources:
+  #########################################
+  # API
+  #########################################
+  PolicyEngineApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: GA-PolicyEngine-API
+      Description: REST API for GA Policy Engine (Chatbot, Feedback, Timeout)
+      EndpointConfiguration:
+        Types: [REGIONAL]
+
+  #########################################
+  # Resources (/api and children)
+  #########################################
+  ApiRoot:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref PolicyEngineApi
+      ParentId: !GetAtt PolicyEngineApi.RootResourceId
+      PathPart: api
+
+  SendMessageResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref PolicyEngineApi
+      ParentId: !Ref ApiRoot
+      PathPart: sendMessage
+
+  FeedbackResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref PolicyEngineApi
+      ParentId: !Ref ApiRoot
+      PathPart: feedback
+
+  TimeoutResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref PolicyEngineApi
+      ParentId: !Ref ApiRoot
+      PathPart: timeout
+
+  HealthResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref PolicyEngineApi
+      ParentId: !Ref ApiRoot
+      PathPart: health
+
+  #########################################
+  # Methods (Lambda proxy + MOCK health)
+  #########################################
+  SendMessageMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref PolicyEngineApi
+      ResourceId: !Ref SendMessageResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PolicyEngineLambdaArn}/invocations
+      MethodResponses:
+        - StatusCode: 200
+
+  FeedbackMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref PolicyEngineApi
+      ResourceId: !Ref FeedbackResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PolicyEngineLambdaArn}/invocations
+      MethodResponses:
+        - StatusCode: 200
+
+  TimeoutMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref PolicyEngineApi
+      ResourceId: !Ref TimeoutResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        IntegrationHttpMethod: POST
+        Type: AWS_PROXY
+        Uri: !Sub arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${PolicyEngineLambdaArn}/invocations
+      MethodResponses:
+        - StatusCode: 200
+
+  HealthMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref PolicyEngineApi
+      ResourceId: !Ref HealthResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode": 200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseTemplates:
+              application/json: '{"message": "GA Policy Engine API healthy"}'
+      MethodResponses:
+        - StatusCode: 200
+
+  #########################################
+  # CORS on /api
+  #########################################
+  ApiCorsOptions:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref PolicyEngineApi
+      ResourceId: !Ref ApiRoot
+      HttpMethod: OPTIONS
+      AuthorizationType: NONE
+      Integration:
+        Type: MOCK
+        RequestTemplates:
+          application/json: '{"statusCode":200}'
+        IntegrationResponses:
+          - StatusCode: 200
+            ResponseParameters:
+              method.response.header.Access-Control-Allow-Headers: "'Content-Type,X-Amz-Date,Authorization,X-Api-Key'"
+              method.response.header.Access-Control-Allow-Methods: "'OPTIONS,GET,POST'"
+              method.response.header.Access-Control-Allow-Origin: "'*'"
+            ResponseTemplates:
+              application/json: ''
+      MethodResponses:
+        - StatusCode: 200
+          ResponseParameters:
+            method.response.header.Access-Control-Allow-Headers: true
+            method.response.header.Access-Control-Allow-Methods: true
+            method.response.header.Access-Control-Allow-Origin: true
+
+  #########################################
+  # Deployment (creates prod stage directly)
+  #########################################
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ApiCorsOptions
+      - SendMessageMethod
+      - FeedbackMethod
+      - TimeoutMethod
+      - HealthMethod
+    Properties:
+      RestApiId: !Ref PolicyEngineApi
+      Description: !Sub "Deployment-${AWS::StackName}-${AWS::Region}-${AWS::StackId}"
+      StageName: prod   # ✅ let deployment publish 'prod' (no separate Stage resource)
+
+  #########################################
+  # Lambda permission (scoped to this API + stage)
+  #########################################
+  LambdaInvokePermission:
+    Type: AWS::Lambda::Permission
+    DependsOn: ApiDeployment
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref PolicyEngineLambdaArn
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${PolicyEngineApi}/prod/*
+
+  #########################################
+  # API Key / Usage Plan (attach AFTER deployment)
+  #########################################
+  UsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    DependsOn: ApiDeployment
+    Properties:
+      UsagePlanName: GA-PolicyEngine-UsagePlan
+      Throttle:
+        BurstLimit: 10
+        RateLimit: 5
+      ApiStages:
+        - ApiId: !Ref PolicyEngineApi
+          Stage: prod
+
+  ApiKey:
+    Type: AWS::ApiGateway::ApiKey
+    DependsOn: UsagePlan
+    Properties:
+      Enabled: true
+      Name: GA-PolicyEngine-API-Key
+
+  UsagePlanKey:
+    Type: AWS::ApiGateway::UsagePlanKey
+    DependsOn: ApiKey
+    Properties:
+      KeyId: !Ref ApiKey
+      KeyType: API_KEY
+      UsagePlanId: !Ref UsagePlan
+
+Outputs:
+  ApiUrl:
+    Description: Base URL for GA Policy Engine REST API
+    Value: !Sub https://${PolicyEngineApi}.execute-api.${AWS::Region}.amazonaws.com/prod/api
+  ApiKeyValue:
+    Description: Generated API key for client integration
+    Value: !Ref ApiKey

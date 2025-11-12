@@ -1,0 +1,179 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: GA Policy Engine - Compute Stack (EC2 + Weaviate + EFS + S3 + Lambda + IAM)
+
+Parameters:
+  VpcId:
+    Type: String
+    Description: VPC Id from network-stack output
+  PublicSubnetId:
+    Type: String
+    Description: Public subnet Id from network-stack output
+  PrivateSubnetId:
+    Type: String
+    Default: ""
+    Description: (Optional) Private subnet Id from network-stack output (recommended for EC2)
+  InstanceSecurityGroup:
+    Type: String
+    Description: Security Group Id from network-stack output
+  FileSystemId:
+    Type: String
+    Description: EFS FileSystemId from efs-stack output
+  InstanceSubnetPlacement:
+    Type: String
+    Default: Private
+    AllowedValues: [Public, Private]
+    Description: Place EC2 in Public or Private subnet (Private recommended)
+  InstanceType:
+    Type: String
+    Default: t3.large
+  KeyName:
+    Type: String
+    Default: ""
+    Description: (Optional) EC2 KeyPair name for SSH access
+  WeaviateDockerImage:
+    Type: String
+    Default: semitechnologies/weaviate:1.23.9
+  WeaviateHostPort:
+    Type: Number
+    Default: 8080
+
+Conditions:
+  UsePrivateSubnet: !And
+    - !Equals [!Ref InstanceSubnetPlacement, "Private"]
+    - !Not [!Equals [!Ref PrivateSubnetId, ""]]
+  HasKeyPair: !Not [!Equals [!Ref KeyName, ""]]
+
+Resources:
+  # ---------- S3 bucket for data ----------
+  PolicyEngineBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub ga-policyengine-${AWS::AccountId}-${AWS::Region}
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        IgnorePublicAcls: true
+        BlockPublicPolicy: true
+        RestrictPublicBuckets: true
+
+  # ---------- IAM role for EC2 ----------
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ga-policyengine-ec2-role-${AWS::Region}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ec2.amazonaws.com]
+            Action: ['sts:AssumeRole']
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+        - arn:aws:iam::aws:policy/AmazonElasticFileSystemFullAccess
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles: [!Ref EC2Role]
+
+  # ---------- EC2 Instance hosting Weaviate ----------
+  WeaviateInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      ImageId: !Sub "{{resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64}}"
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SubnetId: !If [UsePrivateSubnet, !Ref PrivateSubnetId, !Ref PublicSubnetId]
+      SecurityGroupIds: [!Ref InstanceSecurityGroup]
+      KeyName: !If [HasKeyPair, !Ref KeyName, !Ref "AWS::NoValue"]
+      Tags:
+        - Key: Name
+          Value: ga-weaviate
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          set -xe
+          dnf -y update
+          dnf -y install amazon-efs-utils docker
+          systemctl enable docker
+          systemctl start docker
+
+          mkdir -p /mnt/efs/weaviate_data
+          echo "${FileSystemId}:/ /mnt/efs efs _netdev,tls 0 0" >> /etc/fstab
+          mount -a
+          chown -R ec2-user:ec2-user /mnt/efs
+
+          docker run -d --restart unless-stopped \
+            --name weaviate \
+            -p ${WeaviateHostPort}:8080 \
+            -e QUERY_DEFAULTS_LIMIT=25 \
+            -e AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED=true \
+            -e PERSISTENCE_DATA_PATH=/var/lib/weaviate \
+            -v /mnt/efs/weaviate_data:/var/lib/weaviate \
+            ${WeaviateDockerImage}
+
+  # ---------- Lambda for API entry ----------
+  LambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ga-policyengine-lambda-role-${AWS::Region}
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [lambda.amazonaws.com]
+            Action: ['sts:AssumeRole']
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+
+  PolicyEngineLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ga-policyengine-lambda-${AWS::Region}
+      Runtime: python3.12
+      Handler: index.lambda_handler
+      Role: !GetAtt LambdaRole.Arn
+      Timeout: 60
+      MemorySize: 512
+      Environment:
+        Variables:
+          DOC_BUCKET: !Ref PolicyEngineBucket
+      Code:
+        ZipFile: |
+          import json, os
+          def lambda_handler(event, context):
+              return {
+                  "statusCode": 200,
+                  "headers": {"Content-Type": "application/json"},
+                  "body": json.dumps({
+                      "message": "Policy Engine Lambda OK",
+                      "bucket": os.environ.get("DOC_BUCKET")
+                  })
+              }
+
+  LambdaLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${PolicyEngineLambda}
+      RetentionInDays: 30
+
+Outputs:
+  WeaviateInstanceId:
+    Value: !Ref WeaviateInstance
+    Export:
+      Name: !Sub ${AWS::StackName}-WeaviateInstanceId
+
+  PolicyEngineLambdaArn:
+    Value: !GetAtt PolicyEngineLambda.Arn
+    Export:
+      Name: !Sub ${AWS::StackName}-LambdaArn
+
+  PolicyEngineS3Bucket:
+    Value: !Ref PolicyEngineBucket
+    Export:
+      Name: !Sub ${AWS::StackName}-S3Bucket

@@ -1,0 +1,76 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >-
+  EFS stack. Imports private subnet IDs and EC2 security group (created in network-stack).
+  Creates an encrypted EFS file system and mount targets in the private subnets.
+
+Parameters:
+  EnvName:
+    Type: String
+    Default: dev
+    Description: Environment prefix (must match network-stack EnvName used at deploy time).
+  EfsKmsKeyId:
+    Type: String
+    Default: ''
+    Description: Optional KMS key ARN/ID for EFS encryption; leave blank to use AWS-managed key.
+
+Conditions:
+  HasKmsKey: !Not [ !Equals [ !Ref EfsKmsKeyId, '' ] ]
+
+Resources:
+  EfsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "EFS SG - allow NFS from EC2 SG (imported)"
+      VpcId: !ImportValue
+        'Fn::Sub': "${EnvName}-VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 2049
+          ToPort: 2049
+          SourceSecurityGroupId: !ImportValue
+            'Fn::Sub': "${EnvName}-Ec2SecurityGroupId"
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvName}-efs-sg"
+
+  FileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      Encrypted: true
+      PerformanceMode: generalPurpose
+      ThroughputMode: bursting
+      KmsKeyId: !If [ HasKmsKey, !Ref EfsKmsKeyId, !Ref "AWS::NoValue" ]
+      FileSystemTags:
+        - Key: Name
+          Value: !Sub "${EnvName}-efs"
+
+  MountTargetA:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !ImportValue
+        'Fn::Sub': "${EnvName}-PrivateSubnetA"
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+  MountTargetB:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId: !Ref FileSystem
+      SubnetId: !ImportValue
+        'Fn::Sub': "${EnvName}-PrivateSubnetB"
+      SecurityGroups:
+        - !Ref EfsSecurityGroup
+
+Outputs:
+  EfsFileSystemId:
+    Description: EFS FileSystemId
+    Value: !Ref FileSystem
+    Export:
+      Name: !Sub "${EnvName}-EfsFileSystemId"
+
+  EfsSecurityGroupId:
+    Description: EFS Security Group ID
+    Value: !Ref EfsSecurityGroup
+    Export:
+      Name: !Sub "${EnvName}-EfsSecurityGroupId"
