@@ -2,7 +2,9 @@ name: Deploy Backend Lambda
 
 on:
   push:
-    branches: [ yulin, main ]
+    branches:
+      - main
+      - yulin
     paths:
       - 'gen-ai-policy-engine-backend-feature-develop/backend_lambda/**'
   workflow_dispatch: {}
