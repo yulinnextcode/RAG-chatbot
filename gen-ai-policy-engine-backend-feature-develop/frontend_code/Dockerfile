@@ -16,14 +16,14 @@ ENV PYTHONUNBUFFERED=1
 
 RUN apt-get update && apt-get install -y \
     gcc \
-    libaio1 \
+    libaio-dev \
     python3-dev \
     build-essential \
     libssl-dev \
     libffi-dev \
     unzip \
-    wget
-
+    wget \
+ && rm -rf /var/lib/apt/lists/*
 
 
 # Install Oracle Instant Client
