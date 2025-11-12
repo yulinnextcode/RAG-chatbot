@@ -1,62 +1,231 @@
-name: Deploy Backend Lambda to AWS
+name: CI/CD — Backend & Frontend (Lambda + App multi-env)
 
 on:
   push:
     branches:
-      - main
+      - yulin
       - develop
-      - yulin          # ✅ Added your branch
-  workflow_dispatch:   # ✅ Allow manual run from Actions tab
+      - main
+  workflow_dispatch:
+
+permissions:
+  id-token: write           # for OIDC
+  contents: read
+
+concurrency:
+  group: cicd-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   AWS_REGION: us-west-2
-  ECR_REPO: policy-engine-backend
+  # ======== Backend (Lambda / container image) ========
+  BACKEND_CONTEXT: gen-ai-policy-engine-backend-feature-develop/backend_lambda
+  BACKEND_ECR_REPO: 807336493430.dkr.ecr.us-west-2.amazonaws.com/policy-engine-backend
   LAMBDA_NAME: policy-engine-backend-lambda
-
-permissions:
-  id-token: write      # Required for OIDC (no static credentials)
-  contents: read
+  # ======== Frontend (your containerized app) ========
+  FRONTEND_CONTEXT: gen-ai-policy-engine-backend-feature-develop/frontend_code
+  FRONTEND_ECR_REPO: 807336493430.dkr.ecr.us-west-2.amazonaws.com/policy-engine-frontend
 
 jobs:
-  build-deploy:
+  # ---------------------------------------------------
+  # 1) BUILD LAMBDA (maps to GitLab stage: build-lambda)
+  # ---------------------------------------------------
+  build-lambda:
+    name: build-lambda
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials (OIDC)
+      - name: Configure AWS (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Login to Amazon ECR
-        id: login-ecr
+      - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push Docker image
-        working-directory: gen-ai-policy-engine-backend-feature-develop/backend_lambda
+      - name: Build & Push Lambda image
+        id: push
+        working-directory: ${{ env.BACKEND_CONTEXT }}
         run: |
-          IMAGE_TAG=${GITHUB_SHA::7}
-          ECR_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPO }}
-          FULL_TAGGED_IMAGE="$ECR_URI:$IMAGE_TAG"
+          set -e
+          IMAGE_TAG=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          IMAGE_URI="${BACKEND_ECR_REPO}:${IMAGE_TAG}"
+          docker build -t "${IMAGE_URI}" .
+          docker push "${IMAGE_URI}"
+          # also push latest for convenience
+          docker tag "${IMAGE_URI}" "${BACKEND_ECR_REPO}:latest"
+          docker push "${BACKEND_ECR_REPO}:latest"
+          echo "image_uri=${IMAGE_URI}" >> $GITHUB_OUTPUT
 
-          echo "🔧 Building Docker image..."
-          docker build -t "$FULL_TAGGED_IMAGE" .
+    outputs:
+      backend_image_uri: ${{ steps.push.outputs.image_uri }}
 
-          echo "📤 Pushing image to ECR..."
-          docker push "$FULL_TAGGED_IMAGE"
+  # ---------------------------------------------------
+  # 2) DEPLOY LAMBDA (maps to GitLab stage: deploy-lambda)
+  # ---------------------------------------------------
+  deploy-lambda:
+    name: deploy-lambda
+    needs: [build-lambda]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Configure AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-          echo "🔖 Tagging image as latest..."
-          docker tag "$FULL_TAGGED_IMAGE" "$ECR_URI:latest"
-          docker push "$ECR_URI:latest"
-
-          echo "IMAGE_URI=$FULL_TAGGED_IMAGE" >> $GITHUB_ENV
-
-      - name: Update Lambda function to use new image
+      - name: Update Lambda to new image
         run: |
-          echo "🔄 Updating Lambda function..."
           aws lambda update-function-code \
-            --function-name ${{ env.LAMBDA_NAME }} \
-            --image-uri "${{ env.IMAGE_URI }}"
+            --function-name "${LAMBDA_NAME}" \
+            --image-uri "${{ needs.build-lambda.outputs.backend_image_uri }}"
+          echo "Lambda updated → $LAMBDA_NAME"
+
+  # ---------------------------------------------------
+  # 3) BUILD APP (maps to GitLab stage: build-app)
+  # ---------------------------------------------------
+  build-app:
+    name: build-app
+    runs-on: ubuntu-latest
+    needs: [deploy-lambda]       # keep order identical to old pipeline
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build & Push FE image
+        id: push
+        working-directory: ${{ env.FRONTEND_CONTEXT }}
+        run: |
+          set -e
+          IMAGE_TAG=$(echo "${GITHUB_SHA}" | cut -c1-7)
+          IMAGE_URI="${FRONTEND_ECR_REPO}:${IMAGE_TAG}"
+          docker build -t "${IMAGE_URI}" .
+          docker push "${IMAGE_URI}"
+          # also push latest
+          docker tag "${IMAGE_URI}" "${FRONTEND_ECR_REPO}:latest"
+          docker push "${FRONTEND_ECR_REPO}:latest"
+          echo "image_uri=${IMAGE_URI}" >> $GITHUB_OUTPUT
+    outputs:
+      frontend_image_uri: ${{ steps.push.outputs.image_uri }}
+
+  # ---------------------------------------------------
+  # 4) TEST APP (maps to GitLab stage: test-app)
+  # ---------------------------------------------------
+  test-app:
+    name: test-app
+    runs-on: ubuntu-latest
+    needs: [build-app]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # If your FE has tests, add them here. For now we smoke-run the container.
+      - name: Pull image & smoke test
+        run: |
+          set -e
+          IMAGE="${{ needs.build-app.outputs.frontend_image_uri }}"
+          docker pull "${IMAGE}"
+          # Example smoke test (adjust to your container's CMD/port/tests)
+          docker run --rm "${IMAGE}" python -c "print('smoke ok')"
+
+  # ---------------------------------------------------
+  # 5) DEV DEPLOY (maps to GitLab stage: deploy-app-dev)
+  # ---------------------------------------------------
+  deploy-app-dev:
+    name: deploy-app-dev
+    runs-on: ubuntu-latest
+    needs: [test-app]
+    environment:
+      name: dev
+      url: https://your-dev.example.com
+    steps:
+      - name: Configure AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Promote image to :dev tag
+        run: |
+          SRC="${{ needs.build-app.outputs.frontend_image_uri }}"
+          DST="${FRONTEND_ECR_REPO}:dev"
+          aws ecr batch-get-image --repository-name "$(basename ${FRONTEND_ECR_REPO})" --image-ids imageTag=$(echo "${SRC}" | awk -F: '{print $2}') --query 'images[].imageManifest' --output text > manifest.json
+          aws ecr put-image --repository-name "$(basename ${FRONTEND_ECR_REPO})" --image-tag dev --image-manifest file://manifest.json
+
+  # ---------------------------------------------------
+  # 6) STG DEPLOY (maps to GitLab stage: deploy-app-stg)
+  # ---------------------------------------------------
+  deploy-app-stg:
+    name: deploy-app-stg
+    runs-on: ubuntu-latest
+    needs: [deploy-app-dev]
+    environment:
+      name: stg
+      url: https://your-stg.example.com
+    steps:
+      - name: Configure AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Promote image to :stg tag
+        run: |
+          SRC="${{ needs.build-app.outputs.frontend_image_uri }}"
+          aws ecr batch-get-image --repository-name "$(basename ${FRONTEND_ECR_REPO})" --image-ids imageTag=$(echo "${SRC}" | awk -F: '{print $2}') --query 'images[].imageManifest' --output text > manifest.json
+          aws ecr put-image --repository-name "$(basename ${FRONTEND_ECR_REPO})" --image-tag stg --image-manifest file://manifest.json
+
+  # ---------------------------------------------------
+  # 7) UAT DEPLOY (maps to GitLab stage: deploy-app-uat)
+  # ---------------------------------------------------
+  deploy-app-uat:
+    name: deploy-app-uat
+    runs-on: ubuntu-latest
+    needs: [deploy-app-stg]
+    environment:
+      name: uat
+      url: https://your-uat.example.com
+    steps:
+      - name: Configure AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Promote image to :uat tag
+        run: |
+          SRC="${{ needs.build-app.outputs.frontend_image_uri }}"
+          aws ecr batch-get-image --repository-name "$(basename ${FRONTEND_ECR_REPO})" --image-ids imageTag=$(echo "${SRC}" | awk -F: '{print $2}') --query 'images[].imageManifest' --output text > manifest.json
+          aws ecr put-image --repository-name "$(basename ${FRONTEND_ECR_REPO})" --image-tag uat --image-manifest file://manifest.json
+
+  # ---------------------------------------------------
+  # 8) PROD DEPLOY (maps to GitLab stage: deploy-app-prod)
+  # ---------------------------------------------------
+  deploy-app-prod:
+    name: deploy-app-prod
+    runs-on: ubuntu-latest
+    needs: [deploy-app-uat]
+    environment:
+      name: prod
+      url: https://your-prod.example.com
+    steps:
+      - name: Configure AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Promote image to :prod tag
+        run: |
+          SRC="${{ needs.build-app.outputs.frontend_image_uri }}"
+          aws ecr batch-get-image --repository-name "$(basename ${FRONTEND_ECR_REPO})" --image-ids imageTag=$(echo "${SRC}" | awk -F: '{print $2}') --query 'images[].imageManifest' --output text > manifest.json
+          aws ecr put-image --repository-name "$(basename ${FRONTEND_ECR_REPO})" --image-tag prod --image-manifest file://manifest.json
