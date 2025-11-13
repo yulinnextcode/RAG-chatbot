@@ -16,7 +16,8 @@ ENV PYTHONUNBUFFERED=1
 
 RUN apt-get update && apt-get install -y \
     gcc \
-    libaio-dev \
+    #libaio-dev \
+    libaio1t64 \
     python3-dev \
     build-essential \
     libssl-dev \
