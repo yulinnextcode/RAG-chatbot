@@ -16,7 +16,7 @@ ENV PYTHONUNBUFFERED=1
 
 RUN apt-get update && apt-get install -y \
     gcc \
-    #Docker base image is Debian trixie (that’s what current python:3.12-slim uses). In trixie: libaio1 was renamed to libaio1t64
+    #Docker base image is Debian trixie (that’s what current python:3.12-slim uses): libaio1 was renamed to libaio1t64
     #libaio-dev \    
     libaio1t64 \
     python3-dev \
