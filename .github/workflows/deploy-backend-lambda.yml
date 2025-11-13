@@ -124,21 +124,23 @@ jobs:
   # 4) TEST APP (maps to GitLab stage: test-app)
   # ---------------------------------------------------
   test-app:
-    name: test-app
-    runs-on: ubuntu-latest
-    needs: [build-app]
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+  runs-on: ubuntu-latest
+  needs: build-app
+  steps:
+    - uses: actions/checkout@v3
 
-      # If your FE has tests, add them here. For now we smoke-run the container.
-      - name: Pull image & smoke test
-        run: |
-          set -e
-          IMAGE="${{ needs.build-app.outputs.frontend_image_uri }}"
-          docker pull "${IMAGE}"
-          # Example smoke test (adjust to your container's CMD/port/tests)
-          docker run --rm "${IMAGE}" python -c "print('smoke ok')"
+    - uses: aws-actions/configure-aws-credentials@v2
+      with:
+        role-to-assume: ${{ secrets.AWS_GITHUB_ROLE_ARN }}
+        aws-region: us-west-2
+
+    - name: Login to Amazon ECR
+      uses: aws-actions/amazon-ecr-login@v1
+
+    - name: Pull image & smoke test
+      run: |
+        docker pull ${{ env.FRONTEND_ECR_URI }}:${{ env.IMAGE_TAG }}
+        docker run --rm ${{ env.FRONTEND_ECR_URI }}:${{ env.IMAGE_TAG }} --version
 
   # ---------------------------------------------------
   # 5) DEV DEPLOY (maps to GitLab stage: deploy-app-dev)
