@@ -142,8 +142,8 @@ jobs:
 
       - name: Pull image & smoke test
         run: |
-          docker pull ${{ env.FRONTEND_ECR_URI }}:${{ env.IMAGE_TAG }}
-          docker run --rm ${{ env.FRONTEND_ECR_URI }}:${{ env.IMAGE_TAG }} --version
+          docker pull ${{ env.FRONTEND_ECR_REPO }}:${{ env.IMAGE_TAG }}
+          docker run --rm ${{ env.FRONTEND_ECR_REPO }}:${{ env.IMAGE_TAG }} --version
 
   # ---------------------------------------------------
   # 5) DEV DEPLOY (maps to GitLab stage: deploy-app-dev)
