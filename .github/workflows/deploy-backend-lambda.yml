@@ -25,6 +25,7 @@ env:
   # ======== Frontend (your containerized app) ========
   FRONTEND_CONTEXT: gen-ai-policy-engine-backend-feature-develop/frontend_code
   FRONTEND_ECR_REPO: 807336493430.dkr.ecr.us-west-2.amazonaws.com/policy-engine-frontend
+  IMAGE_TAG : init
 
 jobs:
   # ---------------------------------------------------
